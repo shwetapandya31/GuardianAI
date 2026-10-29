@@ -1,0 +1,139 @@
+// GUARDIAN-AI: REAL INCIDENT MAP
+// Browser-only Leaflet canvas (OpenStreetMap tiles). This module is loaded lazily
+// from IncidentMap.tsx so it never runs during server rendering.
+import { useEffect, useRef } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import type { LatLng } from "@/lib/geo";
+
+export type MapMarker = {
+  id: string;
+  kind: "incident" | "camera" | "source" | "destination";
+  lat: number;
+  lng: number;
+  title: string;
+  lines: string[];
+  selected?: boolean;
+  actions?: { label: string; onClick: () => void }[];
+};
+
+export type MapCanvasProps = {
+  markers: MapMarker[];
+  center: LatLng | null;
+  focus: (LatLng & { key: string }) | null;
+  route: [number, number][] | null;
+  onMarkerClick?: (id: string) => void;
+};
+
+const COLORS: Record<MapMarker["kind"], string> = {
+  incident: "#ef4444",
+  camera: "#22d3ee",
+  source: "#f59e0b",
+  destination: "#22c55e",
+};
+
+function pinIcon(marker: MapMarker) {
+  const color = COLORS[marker.kind];
+  const size = marker.selected ? 22 : 16;
+  return L.divIcon({
+    className: "guardianai-pin",
+    html: `<span style="display:block;width:${size}px;height:${size}px;border-radius:9999px;background:${color};box-shadow:0 0 0 4px ${color}33,0 0 12px ${color}99;border:2px solid rgba(255,255,255,.85)"></span>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
+}
+
+export default function MapCanvas({ markers, center, focus, route, onMarkerClick }: MapCanvasProps) {
+  const holder = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const layerRef = useRef<L.LayerGroup | null>(null);
+  const routeRef = useRef<L.Polyline | null>(null);
+
+  useEffect(() => {
+    if (!holder.current || mapRef.current) return;
+    const map = L.map(holder.current, {
+      center: center ? [center.lat, center.lng] : [20, 0],
+      zoom: center ? 14 : 2,
+      zoomControl: true,
+      attributionControl: true,
+    });
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+    }).addTo(map);
+    layerRef.current = L.layerGroup().addTo(map);
+    mapRef.current = map;
+    setTimeout(() => map.invalidateSize(), 60);
+    return () => {
+      map.remove();
+      mapRef.current = null;
+      layerRef.current = null;
+      routeRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Markers are rebuilt whenever real Firestore data changes.
+  useEffect(() => {
+    const group = layerRef.current;
+    if (!group) return;
+    group.clearLayers();
+    markers.forEach((m) => {
+      const marker = L.marker([m.lat, m.lng], { icon: pinIcon(m), title: m.title });
+      const actionsId = `ga-actions-${m.id.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+      const html =
+        `<div style="min-width:190px;font-family:inherit">` +
+        `<strong style="display:block;margin-bottom:4px">${escapeHtml(m.title)}</strong>` +
+        m.lines.map((l) => `<div style="font-size:12px;opacity:.8">${escapeHtml(l)}</div>`).join("") +
+        `<div id="${actionsId}" style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"></div></div>`;
+      marker.bindPopup(html);
+      marker.on("click", () => onMarkerClick?.(m.id));
+      marker.on("popupopen", () => {
+        const container = document.getElementById(actionsId);
+        if (!container) return;
+        container.innerHTML = "";
+        (m.actions ?? []).forEach((a) => {
+          const btn = document.createElement("button");
+          btn.textContent = a.label;
+          btn.style.cssText =
+            "font-size:11px;font-weight:600;padding:4px 8px;border-radius:8px;border:1px solid #94a3b855;cursor:pointer;background:#0ea5e91a;color:inherit";
+          btn.onclick = a.onClick;
+          container.appendChild(btn);
+        });
+      });
+      marker.addTo(group);
+      if (m.selected) marker.openPopup();
+    });
+  }, [markers, onMarkerClick]);
+
+  // Focus (e.g. "View on Map" from an alert card) recentres the real incident.
+  useEffect(() => {
+    if (!focus || !mapRef.current) return;
+    mapRef.current.flyTo([focus.lat, focus.lng], Math.max(mapRef.current.getZoom(), 15), {
+      duration: 0.8,
+    });
+  }, [focus]);
+
+  // GUARDIAN-AI: SOURCE TO DESTINATION ROUTING — real provider polyline only.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (routeRef.current) {
+      routeRef.current.remove();
+      routeRef.current = null;
+    }
+    if (route && route.length > 1) {
+      routeRef.current = L.polyline(route, { color: "#38bdf8", weight: 5, opacity: 0.9 }).addTo(map);
+      map.fitBounds(routeRef.current.getBounds(), { padding: [40, 40] });
+    }
+  }, [route]);
+
+  return <div ref={holder} className="size-full" />;
+}
+
+function escapeHtml(value: string) {
+  return value.replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!,
+  );
+}

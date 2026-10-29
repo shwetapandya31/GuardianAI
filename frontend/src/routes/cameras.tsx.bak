@@ -1,0 +1,255 @@
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
+import { motion } from "framer-motion";
+import { addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from "firebase/firestore";
+import { toast } from "sonner";
+import { ArrowLeft, Cctv, Plus } from "lucide-react";
+import { RequireAuth } from "@/components/RequireAuth";
+import { TopBar } from "@/components/TopBar";
+import { CameraCard } from "@/components/CameraCard";
+import { CameraSkeleton } from "@/components/Skeletons";
+import { EmptyState, PageTransition, Spinner } from "@/components/ui-kit";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useCameras } from "@/hooks/useFirestore";
+import type { Camera } from "@/lib/types";
+import { sharedCameraCollection } from "@/lib/firebase";
+import { useAuth } from "@/hooks/useAuth";
+// GUARDIAN-AI: CAMERA INSTALLATION LOCATION
+import { CameraLocationPicker } from "@/components/CameraLocationPicker";
+import { isValidCoord, type LatLng } from "@/lib/geo";
+
+export const Route = createFileRoute("/cameras")({
+  head: () => ({
+    meta: [
+      { title: "Camera Network — GuardianAI" },
+      {
+        name: "description",
+        content:
+          "Register and monitor CCTV cameras: stream URLs, locations, live status badges and last-seen times.",
+      },
+      { property: "og:title", content: "Camera Network — GuardianAI" },
+      {
+        property: "og:description",
+        content: "Register and monitor CCTV cameras across your GuardianAI network.",
+      },
+    ],
+  }),
+  component: () => (
+    <RequireAuth>
+      <CamerasPage />
+    </RequireAuth>
+  ),
+});
+
+const EMPTY = { name: "", location: "", streamUrl: "", status: "active" };
+
+function CamerasPage() {
+  const { user } = useAuth();
+  const cameras = useCameras();
+  const [form, setForm] = useState(EMPTY);
+  const [saving, setSaving] = useState(false);
+  // GUARDIAN-AI: AUTOMATIC CAMERA COORDINATES — picked on the map, never typed.
+  const [point, setPoint] = useState<LatLng | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+
+  const activeCount = useMemo(
+    () => cameras.data.filter((c) => ["active", "online"].includes((c.status || "").toLowerCase())).length,
+    [cameras.data],
+  );
+
+  const update = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.name.trim()) {
+      toast.error("Camera name is required.");
+      return;
+    }
+    if (!user) {
+      toast.error("You must be signed in to add a camera.");
+      return;
+    }
+    if (!point || !isValidCoord(point.lat, point.lng)) {
+      toast.error("Select the camera's installation location on the map first.");
+      return;
+    }
+    setSaving(true);
+    try {
+      if (editingId) {
+        // Update existing camera
+        await updateDoc(doc(sharedCameraCollection(), editingId), {
+          name: form.name.trim(),
+          location: form.location.trim(),
+          streamUrl: form.streamUrl.trim(),
+          latitude: point.lat,
+          longitude: point.lng,
+          status: form.status === "active" ? "unknown" : "offline",
+          enabled: form.status === "active",
+        });
+        toast.success("Camera updated.");
+      } else {
+        // Add new camera
+        await addDoc(sharedCameraCollection(), {
+          cameraId: form.name.trim(),
+          name: form.name.trim(),
+          location: form.location.trim(),
+          streamUrl: form.streamUrl.trim(),
+          latitude: point.lat,
+          longitude: point.lng,
+          status: form.status === "active" ? "unknown" : "offline",
+          enabled: form.status === "active",
+          lastSeen: null,
+          createdAt: serverTimestamp(),
+        });
+        toast.success("Camera registered.");
+      }
+      setForm(EMPTY);
+      setPoint(null);
+      setEditingId(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : (editingId ? "Could not update camera." : "Could not add camera."));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Edit an existing camera, populate form and map point
+  function handleEdit(camera: Camera) {
+    setForm({
+      name: camera.name,
+      location: camera.location,
+      streamUrl: camera.streamUrl,
+      status: camera.enabled ? "active" : "offline",
+    });
+    if (camera.latitude != null && camera.longitude != null) {
+      setPoint({ lat: camera.latitude, lng: camera.longitude });
+    } else {
+      setPoint(null);
+    }
+    setEditingId(camera.id);
+  }
+
+  // Delete a camera after user confirmation
+  async function handleDelete(camera: Camera) {
+    if (!window.confirm(`Delete camera ${camera.name || camera.cameraId}?`)) return;
+    try {
+      await deleteDoc(doc(sharedCameraCollection(), camera.id));
+      toast.success("Camera deleted.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not delete camera.");
+    }
+  }
+
+  return (
+    <PageTransition>
+      <TopBar />
+      <main className="mx-auto max-w-6xl space-y-6 px-4 pb-16 pt-5">
+        <div className="flex items-center justify-between gap-3">
+          <Link
+            to="/dashboard"
+            className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"
+          >
+            <ArrowLeft className="size-4" /> Console
+          </Link>
+          <span className="rounded-full border border-success/40 bg-success/10 px-2.5 py-1 text-[11px] font-semibold text-success">
+            {activeCount}/{cameras.data.length} active
+          </span>
+        </div>
+
+        <div>
+          <h1 className="font-display text-2xl font-bold">Camera Network</h1>
+          <p className="text-xs text-muted-foreground">Register and monitor CCTV endpoints</p>
+        </div>
+
+        <motion.form
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          onSubmit={handleSubmit}
+          className="glass space-y-4 rounded-2xl p-4"
+        >
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="c-name">Camera Name</Label>
+              <Input id="c-name" value={form.name} onChange={update("name")} placeholder="CAM-014" />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="c-location">Location Name</Label>
+              <Input
+                id="c-location"
+                value={form.location}
+                onChange={update("location")}
+                placeholder="Metro Station Gate 3"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="c-stream">Stream URL</Label>
+              <Input
+                id="c-stream"
+                value={form.streamUrl}
+                onChange={update("streamUrl")}
+                placeholder="rtsp://..."
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="c-status">Status</Label>
+              <select
+                id="c-status"
+                value={form.status}
+                onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="active">Active</option>
+                <option value="offline">Offline</option>
+              </select>
+            </div>
+          </div>
+
+          {/* GUARDIAN-AI: CAMERA INSTALLATION LOCATION */}
+          <div className="space-y-1.5">
+            <Label>Installation Location</Label>
+            <CameraLocationPicker
+              value={point}
+              locationName={form.location}
+              onChange={(next, name) => {
+                setPoint(next);
+                if (name) setForm((f) => ({ ...f, location: name }));
+              }}
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={saving}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-brand px-4 py-2.5 font-display text-sm font-bold text-primary-foreground shadow-glow transition-transform active:scale-[0.98] disabled:opacity-60"
+          >
+            {saving ? <Spinner className="size-4" /> : <Plus className="size-4" />}
+            Add Camera
+          </button>
+        </motion.form>
+
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {cameras.loading ? (
+            <>
+              <CameraSkeleton />
+              <CameraSkeleton />
+              <CameraSkeleton />
+            </>
+          ) : cameras.data.length === 0 ? (
+            <div className="sm:col-span-2 lg:col-span-3">
+              <EmptyState
+                icon={<Cctv className="size-8" />}
+                title="No cameras registered"
+                description={cameras.error ?? "Add your first camera using the form above."}
+              />
+            </div>
+          ) : (
+            cameras.data.map((camera, i) => <CameraCard key={camera.id} camera={camera} index={i} onEdit={() => handleEdit(camera)} onDelete={() => handleDelete(camera)} />)
+          )}
+        </div>
+      </main>
+    </PageTransition>
+  );
+}

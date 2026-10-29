@@ -1,0 +1,265 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant light (&:is(.light *));
+
+/*
+ * Design system definition.
+ *
+ * The @theme inline block maps CSS custom properties to Tailwind utility
+ * classes (e.g. --color-primary -> bg-primary, text-primary).
+ *
+ * The :root and .dark blocks define the actual color values using oklch.
+ * All colors MUST use oklch format.
+ *
+ * To add a new semantic color:
+ * 1. Add the variable to :root (light value) and .dark (dark value)
+ * 2. Register it in @theme inline as --color-<name>: var(--<name>)
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-surface: var(--surface);
+  --color-cyan: var(--cyan);
+  --color-critical: var(--critical);
+  --color-warning: var(--warning);
+  --color-success: var(--success);
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+:root {
+  --radius: 0.9rem;
+  --background: oklch(0.182 0.041 257.5);
+  --foreground: oklch(0.97 0.008 250);
+  --card: oklch(0.235 0.045 256);
+  --card-foreground: oklch(0.97 0.008 250);
+  --popover: oklch(0.221 0.047 256);
+  --popover-foreground: oklch(0.97 0.008 250);
+  --primary: oklch(0.66 0.18 254);
+  --primary-foreground: oklch(0.14 0.02 260);
+  --secondary: oklch(0.29 0.05 256);
+  --secondary-foreground: oklch(0.95 0.01 250);
+  --muted: oklch(0.27 0.045 256);
+  --muted-foreground: oklch(0.76 0.03 250);
+  --accent: oklch(0.8 0.13 197);
+  --accent-foreground: oklch(0.15 0.02 260);
+  --destructive: oklch(0.62 0.23 25);
+  --destructive-foreground: oklch(0.98 0.005 250);
+  --border: oklch(0.38 0.05 256 / 55%);
+  --input: oklch(0.36 0.05 256 / 70%);
+  --ring: oklch(0.66 0.18 254);
+
+  --surface: oklch(0.26 0.05 256);
+  --cyan: oklch(0.83 0.13 196);
+  --critical: oklch(0.66 0.23 25);
+  --warning: oklch(0.78 0.16 62);
+  --success: oklch(0.77 0.16 158);
+
+  --gradient-brand: linear-gradient(135deg, oklch(0.66 0.18 254), oklch(0.83 0.13 196));
+  --gradient-shell: radial-gradient(
+      1000px 600px at 12% -10%,
+      oklch(0.4 0.14 254 / 22%),
+      transparent 60%
+    ),
+    radial-gradient(900px 520px at 100% 0%, oklch(0.5 0.12 196 / 14%), transparent 58%);
+  --panel-bg: var(--card);
+  --panel-border: oklch(0.45 0.06 256 / 45%);
+  --glass-bg: oklch(0.221 0.047 256 / 72%);
+  --glass-border: oklch(0.7 0.05 240 / 16%);
+  --shadow-soft: 0 12px 32px -20px oklch(0.02 0.02 260 / 95%);
+  --shadow-glow: 0 0 0 1px oklch(0.66 0.18 254 / 25%), 0 20px 50px -25px oklch(0.66 0.18 254 / 60%);
+}
+
+.light {
+  --background: oklch(0.977 0.007 248);
+  --foreground: oklch(0.24 0.03 258);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.24 0.03 258);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.24 0.03 258);
+  --primary: oklch(0.55 0.18 254);
+  --primary-foreground: oklch(0.99 0.005 250);
+  --secondary: oklch(0.95 0.015 240);
+  --secondary-foreground: oklch(0.3 0.03 258);
+  --muted: oklch(0.95 0.012 240);
+  --muted-foreground: oklch(0.48 0.03 254);
+  --accent: oklch(0.62 0.11 197);
+  --accent-foreground: oklch(0.99 0.005 250);
+  --destructive: oklch(0.55 0.22 25);
+  --destructive-foreground: oklch(0.99 0.005 250);
+  --border: oklch(0.6 0.03 250 / 22%);
+  --input: oklch(0.6 0.03 250 / 32%);
+  --ring: oklch(0.55 0.18 254);
+
+  --surface: oklch(1 0 0);
+  --cyan: oklch(0.58 0.11 196);
+  --critical: oklch(0.54 0.22 25);
+  --warning: oklch(0.62 0.15 62);
+  --success: oklch(0.56 0.14 158);
+
+  --gradient-brand: linear-gradient(135deg, oklch(0.55 0.18 254), oklch(0.62 0.12 196));
+  --gradient-shell: radial-gradient(1000px 600px at 12% -10%, oklch(0.85 0.06 254 / 45%), transparent 62%),
+    radial-gradient(900px 520px at 100% 0%, oklch(0.9 0.05 196 / 40%), transparent 58%);
+  --panel-bg: var(--card);
+  --panel-border: oklch(0.6 0.03 250 / 20%);
+  --glass-bg: oklch(1 0 0 / 78%);
+  --glass-border: oklch(0.55 0.04 250 / 14%);
+  --shadow-soft: 0 10px 30px -18px oklch(0.4 0.06 254 / 35%);
+  --shadow-glow: 0 0 0 1px oklch(0.55 0.18 254 / 18%), 0 16px 40px -22px oklch(0.55 0.18 254 / 50%);
+}
+
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  html.light {
+    color-scheme: light;
+  }
+
+  body {
+    background-color: var(--color-background);
+    background-image: var(--gradient-shell);
+    background-attachment: fixed;
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior-y: contain;
+    transition:
+      background-color 0.35s ease,
+      color 0.35s ease;
+  }
+
+  .glass,
+  .glass-panel,
+  .card,
+  header,
+  dialog,
+  [role="dialog"],
+  button,
+  input,
+  select,
+  textarea {
+    transition:
+      background-color 0.35s ease,
+      border-color 0.35s ease,
+      color 0.35s ease,
+      box-shadow 0.35s ease;
+  }
+
+  h1,
+  h2,
+  h3,
+  .font-display {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+}
+
+/* Solid, readable card surface used across the app. */
+@utility glass {
+  background-color: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--shadow-soft);
+}
+
+/* True glassmorphism — reserved for the top bar and dialogs. */
+@utility glass-panel {
+  background-color: var(--glass-bg);
+  backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-soft);
+}
+
+
+@utility text-gradient {
+  background-image: var(--gradient-brand);
+  background-clip: text;
+  color: transparent;
+}
+
+@utility bg-gradient-brand {
+  background-image: var(--gradient-brand);
+}
+
+@utility shadow-glow {
+  box-shadow: var(--shadow-glow);
+}
+
+@utility grid-noise {
+  background-image:
+    linear-gradient(oklch(0.75 0.05 240 / 6%) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(0.75 0.05 240 / 6%) 1px, transparent 1px);
+  background-size: 42px 42px;
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 oklch(0.64 0.24 25 / 55%);
+  }
+  70% {
+    box-shadow: 0 0 0 12px oklch(0.64 0.24 25 / 0%);
+  }
+  100% {
+    box-shadow: 0 0 0 0 oklch(0.64 0.24 25 / 0%);
+  }
+}
+
+@utility animate-pulse-ring {
+  animation: pulse-ring 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes scan {
+  0% {
+    transform: translateY(-100%);
+  }
+  100% {
+    transform: translateY(400%);
+  }
+}
+
+@utility animate-scan {
+  animation: scan 3.2s linear infinite;
+}
+
+
+
+  input::-ms-reveal,
+  input::-ms-clear {
+    display: none;
+    width: 0;
+    height: 0;
+  }

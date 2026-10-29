@@ -1,0 +1,77 @@
+// GUARDIAN-AI: MAP LOCATION PICKER
+// Browser-only Leaflet canvas used when registering a physical camera. Clicking the
+// map or dragging the marker reports the exact installation point back to the form.
+import { useEffect, useRef } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import type { LatLng } from "@/lib/geo";
+
+export type PickerCanvasProps = {
+  value: LatLng | null;
+  onPick: (point: LatLng) => void;
+};
+
+const PIN_HTML =
+  '<span style="display:block;width:20px;height:20px;border-radius:9999px;background:#22d3ee;box-shadow:0 0 0 4px #22d3ee33,0 0 12px #22d3ee99;border:2px solid rgba(255,255,255,.85)"></span>';
+
+export default function PickerCanvas({ value, onPick }: PickerCanvasProps) {
+  const holder = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const markerRef = useRef<L.Marker | null>(null);
+  const pickRef = useRef(onPick);
+  pickRef.current = onPick;
+
+  useEffect(() => {
+    if (!holder.current || mapRef.current) return;
+    const map = L.map(holder.current, {
+      center: value ? [value.lat, value.lng] : [20, 0],
+      zoom: value ? 16 : 2,
+    });
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      maxZoom: 19,
+      attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
+    }).addTo(map);
+    map.on("click", (e: L.LeafletMouseEvent) =>
+      pickRef.current({ lat: e.latlng.lat, lng: e.latlng.lng }),
+    );
+    mapRef.current = map;
+    setTimeout(() => map.invalidateSize(), 60);
+    return () => {
+      map.remove();
+      mapRef.current = null;
+      markerRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!value) {
+      markerRef.current?.remove();
+      markerRef.current = null;
+      return;
+    }
+    if (!markerRef.current) {
+      const marker = L.marker([value.lat, value.lng], {
+        draggable: true,
+        icon: L.divIcon({
+          className: "guardianai-pick-pin",
+          html: PIN_HTML,
+          iconSize: [20, 20],
+          iconAnchor: [10, 10],
+        }),
+      }).addTo(map);
+      marker.on("dragend", () => {
+        const p = marker.getLatLng();
+        pickRef.current({ lat: p.lat, lng: p.lng });
+      });
+      markerRef.current = marker;
+    } else {
+      markerRef.current.setLatLng([value.lat, value.lng]);
+    }
+    map.setView([value.lat, value.lng], Math.max(map.getZoom(), 16));
+  }, [value]);
+
+  return <div ref={holder} className="size-full" />;
+}

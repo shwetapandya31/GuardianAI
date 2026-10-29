@@ -1,0 +1,3 @@
+# Guardian-AI Root Requirements Reference
+# Points to backend/requirements.txt for backend Python dependencies
+-r backend/requirements.txt

@@ -1,0 +1,158 @@
+// GUARDIAN-AI: CAMERA INSTALLATION LOCATION
+// Lets an installer choose where a physical camera is mounted by searching an
+// address, tapping the map, or using the device location. The component reports
+// real coordinates + a human-readable place name; it never invents a location.
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { Check, Loader2, LocateFixed, MapPin, Search } from "lucide-react";
+import { toast } from "sonner";
+import { isValidCoord, reverseGeocode, searchPlaces, type LatLng, type PlaceResult } from "@/lib/geo";
+
+const PickerCanvas = lazy(() => import("@/components/map/PickerCanvas"));
+
+export type CameraLocationPickerProps = {
+  value: LatLng | null;
+  locationName: string;
+  onChange: (point: LatLng | null, locationName?: string) => void;
+};
+
+export function CameraLocationPicker({ value, locationName, onChange }: CameraLocationPickerProps) {
+  const [mounted, setMounted] = useState(false);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<PlaceResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const changeRef = useRef(onChange);
+  changeRef.current = onChange;
+
+  useEffect(() => setMounted(true), []);
+
+  async function handleSearch(e: React.FormEvent) {
+    e.preventDefault();
+    if (query.trim().length < 3) {
+      toast.error("Type at least 3 characters to search a place.");
+      return;
+    }
+    setSearching(true);
+    try {
+      const rows = await searchPlaces(query);
+      setResults(rows);
+      if (rows.length === 0) toast.error("No matching place found.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Location search unavailable.");
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  // GUARDIAN-AI: AUTOMATIC CAMERA COORDINATES — map tap / drag resolves a place name.
+  async function pickPoint(point: LatLng) {
+    changeRef.current(point);
+    const name = await reverseGeocode(point);
+    if (name) changeRef.current(point, name);
+  }
+
+  function useMyLocation() {
+    if (!("geolocation" in navigator)) {
+      toast.error("This device cannot share its location.");
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocating(false);
+        void pickPoint({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      },
+      () => {
+        setLocating(false);
+        toast.error("Location permission denied. Search or tap the map instead.");
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    );
+  }
+
+  const selected = value && isValidCoord(value.lat, value.lng);
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-2">
+        <form onSubmit={handleSearch} className="flex min-w-0 flex-1 gap-2">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search address or place…"
+            className="h-10 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+            aria-label="Search camera installation location"
+          />
+          <button
+            type="submit"
+            disabled={searching}
+            className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-md border border-border/70 bg-secondary/50 px-3 text-xs font-semibold disabled:opacity-60"
+          >
+            {searching ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
+            Search
+          </button>
+        </form>
+        <button
+          type="button"
+          onClick={useMyLocation}
+          disabled={locating}
+          className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-md border border-border/70 bg-secondary/50 px-3 text-xs font-semibold disabled:opacity-60"
+        >
+          {locating ? <Loader2 className="size-4 animate-spin" /> : <LocateFixed className="size-4" />}
+          Use my location
+        </button>
+      </div>
+
+      {results.length > 0 ? (
+        <ul className="max-h-40 overflow-auto rounded-xl border border-border/70 bg-background/60 text-xs">
+          {results.map((r) => (
+            <li key={`${r.lat},${r.lng},${r.label}`}>
+              <button
+                type="button"
+                onClick={() => {
+                  onChange({ lat: r.lat, lng: r.lng }, r.label);
+                  setResults([]);
+                }}
+                className="block w-full px-3 py-2 text-left hover:bg-secondary/60"
+              >
+                {r.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      {/* GUARDIAN-AI: MAP LOCATION PICKER */}
+      <div className="h-[220px] overflow-hidden rounded-xl border border-border/70">
+        {mounted ? (
+          <Suspense
+            fallback={
+              <div className="grid size-full place-items-center text-muted-foreground">
+                <Loader2 className="size-5 animate-spin" />
+              </div>
+            }
+          >
+            <PickerCanvas value={selected ? value : null} onPick={(p) => void pickPoint(p)} />
+          </Suspense>
+        ) : (
+          <div className="grid size-full place-items-center text-muted-foreground">
+            <Loader2 className="size-5 animate-spin" />
+          </div>
+        )}
+      </div>
+
+      {selected ? (
+        <p className="flex flex-wrap min-w-0 items-center gap-1.5 text-xs font-semibold text-success">
+          <Check className="size-3.5" /> Camera location selected
+          <span className="min-w-0 break-words font-normal text-muted-foreground">
+            — {locationName || "Selected point"}
+          </span>
+        </p>
+      ) : (
+        <p className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+          <MapPin className="size-3.5" /> Search a place, tap the map, or use your location.
+        </p>
+      )}
+    </div>
+  );
+}

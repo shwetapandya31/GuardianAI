@@ -1,0 +1,352 @@
+// GUARDIAN-AI: REAL INCIDENT MAP
+// Renders real Firestore incident + camera locations on an interactive map and
+// provides real source → destination routing. No sample markers, no fake routes:
+// everything here comes from the live Firestore listeners passed in as props.
+//
+// GUARDIAN-AI: FIRESTORE INCIDENT LOCATION
+// Coordinates come from the alert documents (lat/lng normalized in useFirestore).
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { MapPin, Navigation, Route as RouteIcon, Crosshair, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import type { Alert, Camera } from "@/lib/types";
+import { formatConfidence, formatCoord, formatTime } from "@/lib/format";
+import {
+  fetchRoute,
+  formatDistance,
+  formatDuration,
+  googleMapsDirectionsUrl,
+  isValidCoord,
+  parseLatLng,
+  type LatLng,
+  type RouteResult,
+} from "@/lib/geo";
+import type { MapMarker } from "@/components/map/MapCanvas";
+
+const MapCanvas = lazy(() => import("@/components/map/MapCanvas"));
+
+export type IncidentMapProps = {
+  alerts: Alert[];
+  cameras: Camera[];
+  /** Set by "View on Map" on an alert card / notification. */
+  focusAlertId?: string | null;
+};
+
+export function IncidentMap({ alerts, cameras, focusAlertId }: IncidentMapProps) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+
+  // GUARDIAN-AI: CAMERA LOCATION → INCIDENT MAP
+  // An alert's own coordinates always win. When the backend alert has none, the
+  // incident location is derived from the registered camera that raised it, so no
+  // operator ever has to type an incident coordinate.
+  const cameraPoints = useMemo(() => {
+    const map = new Map<string, { lat: number; lng: number; location: string }>();
+    cameras.forEach((c) => {
+      if (!isValidCoord(c.latitude, c.longitude)) return;
+      const entry = { lat: c.latitude as number, lng: c.longitude as number, location: c.location };
+      [c.cameraId, c.name, c.id].forEach((key) => {
+        if (key) map.set(String(key).trim().toLowerCase(), entry);
+      });
+    });
+    return map;
+  }, [cameras]);
+
+  const locatedAlerts = useMemo(
+    () =>
+      alerts
+        .map((a) => {
+          if (isValidCoord(a.latitude, a.longitude)) return a;
+          const cam = cameraPoints.get((a.cameraId || "").trim().toLowerCase());
+          return cam ? { ...a, latitude: cam.lat, longitude: cam.lng } : a;
+        })
+        .filter((a) => isValidCoord(a.latitude, a.longitude)),
+    [alerts, cameraPoints],
+  );
+  const locatedCameras = useMemo(
+    () => cameras.filter((c) => isValidCoord(c.latitude, c.longitude)),
+    [cameras],
+  );
+
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [destinationKey, setDestinationKey] = useState<string>("");
+  const [manualInput, setManualInput] = useState("");
+  const [manualPoint, setManualPoint] = useState<LatLng | null>(null);
+  const [route, setRoute] = useState<RouteResult | null>(null);
+  const [routing, setRouting] = useState(false);
+  const [focus, setFocus] = useState<(LatLng & { key: string }) | null>(null);
+
+  // Default selection follows the latest real located incident.
+  useEffect(() => {
+    setSelectedId((current) => {
+      if (current && locatedAlerts.some((a) => a.id === current)) return current;
+      return locatedAlerts[0]?.id ?? null;
+    });
+  }, [locatedAlerts]);
+
+  const selected = locatedAlerts.find((a) => a.id === selectedId) ?? null;
+  const source: LatLng | null = selected
+    ? { lat: selected.latitude as number, lng: selected.longitude as number }
+    : null;
+
+  // GUARDIAN-AI: ALERT → MAP — external "View on Map" focuses the real incident.
+  useEffect(() => {
+    if (!focusAlertId) return;
+    const target = locatedAlerts.find((a) => a.id === focusAlertId);
+    if (!target) return;
+    setSelectedId(target.id);
+    setRoute(null);
+    setFocus({ lat: target.latitude as number, lng: target.longitude as number, key: `${focusAlertId}-${Date.now()}` });
+  }, [focusAlertId, locatedAlerts]);
+
+  const destination: LatLng | null = useMemo(() => {
+    if (destinationKey === "manual") return manualPoint;
+    const cam = locatedCameras.find((c) => c.id === destinationKey);
+    return cam ? { lat: cam.latitude as number, lng: cam.longitude as number } : null;
+  }, [destinationKey, manualPoint, locatedCameras]);
+
+  const destinationLabel =
+    destinationKey === "manual"
+      ? manualPoint
+        ? `Custom point ${formatCoord(manualPoint.lat)}, ${formatCoord(manualPoint.lng)}`
+        : "Advanced: enter coordinates"
+      : (locatedCameras.find((c) => c.id === destinationKey)?.name ?? "Not selected");
+
+  const markers = useMemo<MapMarker[]>(() => {
+    const list: MapMarker[] = locatedAlerts.map((a) => ({
+      id: `alert:${a.id}`,
+      kind: a.id === selectedId ? "source" : "incident",
+      lat: a.latitude as number,
+      lng: a.longitude as number,
+      title: a.message || "Alert detected",
+      lines: [
+        `Camera: ${a.cameraId || "—"}`,
+        `Confidence: ${formatConfidence(a.confidence)}`,
+        `Time: ${formatTime(a.timestamp)}`,
+        `Location: ${formatCoord(a.latitude)}, ${formatCoord(a.longitude)}`,
+        `Status: ${a.status || "pending"}`,
+      ],
+      selected: a.id === selectedId,
+      actions: [
+        { label: "View Alert Details", onClick: () => setSelectedId(a.id) },
+        {
+          label: "Route to Incident",
+          onClick: () => {
+            setSelectedId(a.id);
+            document.getElementById("incident-routing")?.scrollIntoView({ behavior: "smooth", block: "center" });
+          },
+        },
+      ],
+    }));
+    locatedCameras.forEach((c) =>
+      list.push({
+        id: `camera:${c.id}`,
+        kind: destinationKey === c.id ? "destination" : "camera",
+        lat: c.latitude as number,
+        lng: c.longitude as number,
+        title: c.name || c.cameraId,
+        lines: [`Camera: ${c.cameraId}`, c.location || "", `Status: ${c.status || "unknown"}`].filter(Boolean),
+        actions: [{ label: "Set as Destination", onClick: () => setDestinationKey(c.id) }],
+      }),
+    );
+    if (destinationKey === "manual" && manualPoint) {
+      list.push({
+        id: "manual:destination",
+        kind: "destination",
+        lat: manualPoint.lat,
+        lng: manualPoint.lng,
+        title: "Response location",
+        lines: [`${formatCoord(manualPoint.lat)}, ${formatCoord(manualPoint.lng)}`],
+      });
+    }
+    return list;
+  }, [locatedAlerts, locatedCameras, selectedId, destinationKey, manualPoint]);
+
+  async function handleRoute() {
+    if (!source || !destination) {
+      toast.error("Select an incident and a destination first.");
+      return;
+    }
+    setRouting(true);
+    try {
+      const result = await fetchRoute(source, destination);
+      setRoute(result);
+    } catch (err) {
+      setRoute(null);
+      toast.error(err instanceof Error ? err.message : "Routing service unavailable.");
+    } fi-nally {
+      setRouting(false);
+    }
+  }
+
+  const hasLocations = locatedAlerts.length > 0 || locatedCameras.length > 0;
+
+  return (
+    <section id="incident-map" className="scroll-mt-20">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h2 className="font-display text-lg font-bold">Incident Map</h2>
+          <p className="text-xs text-muted-foreground">Live incident locations and response routing</p>
+        </div>
+        {locatedAlerts.length > 0 ? (
+          <span className="shrink-0 rounded-full border border-critical/40 bg-critical/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-critical">
+            {locatedAlerts.length} located
+          </span>
+        ) : null}
+      </div>
+
+      <div className="glass mt-3 overflow-hidden rounded-2xl">
+        <div className="relative h-[320px] w-full sm:h-[400px]">
+          {!hasLocations ? (
+            <div className="grid size-full place-items-center px-6 text-center">
+              <div>
+                <MapPin className="mx-auto size-8 text-muted-foreground" />
+                <p className="mt-2 text-sm font-semibold">No incident locations available</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Markers appear as soon as alerts or cameras carry real coordinates.
+                </p>
+              </div>
+            </div>
+          ) : mounted ? (
+            <Suspense
+              fallback={
+                <div className="grid size-full place-items-center text-muted-foreground">
+                  <Loader2 className="size-5 animate-spin" />
+                </div>
+              }
+            >
+              <MapCanvas
+                markers={markers}
+                center={source ?? (locatedCameras[0] ? { lat: locatedCameras[0].latitude as number, lng: locatedCameras[0].longitude as number } : null)}
+                focus={focus}
+                route={route?.coordinates ?? null}
+                onMarkerClick={(id) => {
+                  if (id.startsWith("alert:")) setSelectedId(id.slice(6));
+                }}
+              />
+            </Suspense>
+          ) : (
+            <div className="grid size-full place-items-center text-muted-foreground">
+              <Loader2 className="size-5 animate-spin" />
+            </div>
+          )}
+        </div>
+
+        {/* GUARDIAN-AI: SOURCE TO DESTINATION ROUTING */}
+        <div id="incident-routing" className="grid gap-3 border-t border-border/60 p-4 md:grid-cols-2">
+          <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-warning">Source</p>
+            <p className="text-xs text-muted-foreground">Incident location</p>
+            {selected && source ? (
+              <div className="mt-2 space-y-1">
+                <p className="truncate text-sm font-semibold">{selected.message || "Alert detected"}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {selected.cameraId || "—"} · {formatConfidence(selected.confidence)} · {formatTime(selected.timestamp)}
+                </p>
+                <p className="font-mono text-[11px] text-muted-foreground">
+                  {formatCoord(source.lat)}, {formatCoord(source.lng)}
+                </p>
+                <select
+                  value={selectedId ?? ""}
+                  onChange={(e) => {
+                    setSelectedId(e.target.value);
+                    setRoute(null);
+                  }}
+                  className="mt-1 w-full rounded-lg border border-border/70 bg-background/60 px-2 py-1.5 text-xs"
+                  aria-label="Select incident"
+                >
+                  {locatedAlerts.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {(a.message || "Alert").slice(0, 40)} — {a.cameraId || "—"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-muted-foreground">No incident with coordinates yet.</p>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-border/70 bg-secondary/30 p-3">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-success">Destination</p>
+            <p className="text-xs text-muted-foreground">Response location</p>
+            <select
+              value={destinationKey}
+              onChange={(e) => {
+                setDestinationKey(e.target.value);
+                setRoute(null);
+              }}
+              className="mt-2 w-full rounded-lg border border-border/70 bg-background/60 px-2 py-1.5 text-xs"
+              aria-label="Select response destination"
+            >
+              <option value="">Select response destination…</option>
+              {locatedCameras.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name || c.cameraId} — {c.location || "camera"}
+                </option>
+              ))}
+              <option value="manual">Advanced: manual coordinates</option>
+            </select>
+            {destinationKey === "manual" ? (
+              <div className="mt-2 flex gap-2">
+                <input
+                  value={manualInput}
+                  onChange={(e) => setManualInput(e.target.value)}
+                  placeholder="lat, lng"
+                  className="min-w-0 flex-1 rounded-lg border border-border/70 bg-background/60 px-2 py-1.5 font-mono text-xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const point = parseLatLng(manualInput);
+                    if (!point) {
+                      toast.error("Enter coordinates as: 12.9716, 77.5946");
+                      return;
+                    }
+                    setManualPoint(point);
+                    setRoute(null);
+                  }}
+                  className="shrink-0 rounded-lg border border-border/70 bg-secondary/50 px-2.5 text-xs font-semibold"
+                >
+                  <Crosshair className="size-3.5" />
+                </button>
+              </div>
+            ) : null}
+            <p className="mt-2 truncate text-[11px] text-muted-foreground">{destinationLabel}</p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 md:col-span-2">
+            <button
+              type="button"
+              onClick={handleRoute}
+              disabled={!source || !destination || routing}
+              className="inline-flex items-center gap-2 rounded-xl border border-primary/40 bg-primary/15 px-3 py-2 text-xs font-semibold text-primary disabled:opacity-50"
+            >
+              {routing ? <Loader2 className="size-4 animate-spin" /> : <RouteIcon className="size-4" />}
+              Route to Incident
+            </button>
+            {/* GUARDIAN-AI: GOOGLE MAPS NAVIGATION */}
+            <button
+              type="button"
+              onClick={() => {
+                if (!source || !destination) {
+                  toast.error("Select an incident and a destination first.");
+                  return;
+                }
+                window.open(googleMapsDirectionsUrl(source, destination), "_blank", "noopener");
+              }}
+              disabled={!source || !destination}
+              className="inline-flex items-center gap-2 rounded-xl border border-border/70 bg-secondary/50 px-3 py-2 text-xs font-semibold disabled:opacity-50"
+            >
+              <Navigation className="size-4" /> Open Navigation
+            </button>
+            {route ? (
+              <span className="text-xs text-muted-foreground">
+                {formatDistance(route.distance)} · {formatDuration(route.duration)} by road
+              </span>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
